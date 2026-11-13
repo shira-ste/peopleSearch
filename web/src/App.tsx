@@ -76,7 +76,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages, loading])
+  useEffect(() => {
+    // Block body on purpose: an effect's return value is treated as a cleanup function.
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
 
   async function send(question: string) {
     const text = question.trim()
