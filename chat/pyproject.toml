@@ -11,10 +11,17 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=2.4.1",
+    "pytest>=9.2.0",
     "ruff>=0.17.5",
 ]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
+mypy_path = "../server"
 strict = true
+
+[tool.pytest.ini_options]
+pythonpath = [".", "../server"]
+markers = ["e2e: calls the real Claude API (costs money); run with RUN_E2E=1"]

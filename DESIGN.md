@@ -131,6 +131,5 @@ In the UI, errors appear inline as a red message bubble, and the conversation st
 
 ## Not done yet
 
-- Automated tests (planned for the next iteration).
 - Streaming answers token by token. Answers currently arrive all at once, with a "Thinking…" indicator while waiting.
 - Docker / one-command startup.

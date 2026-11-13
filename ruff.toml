@@ -6,4 +6,8 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "ANN"]
 
 [lint.isort]
-known-first-party = ["fx", "ingest"]
+known-first-party = ["fx", "ingest", "server", "tests", "main"]
+
+[lint.per-file-ignores]
+# Test doubles mimic SDK methods that take arbitrary keyword arguments.
+"**/tests/*" = ["ANN401"]

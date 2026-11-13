@@ -96,12 +96,33 @@ To reload after changing the CSV:
 cd server && uv run python ingest.py
 ```
 
-## Code quality
+## Tests
 
-Python code is fully type-annotated and checked with **ruff** (lint and format) and **mypy** in strict mode. The web app is checked with **oxlint** and the TypeScript compiler.
+Run every test and check (none of these call a paid API):
 
 ```bash
-cd server && uv run ruff check . && uv run ruff format --check . && uv run mypy .
-cd chat   && uv run ruff check . && uv run ruff format --check . && uv run mypy .
-cd web    && npm run lint && npm run build
+cd server && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy .
+cd chat   && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy .
+cd web    && npm test && npm run lint && npm run build
 ```
+
+| Suite | What it checks |
+|---|---|
+| `server/tests/test_ingest.py` | CSV parsing: day-first dates, nicknames, currency codes, salary annualizing, empty values, manager links |
+| `server/tests/test_tools.py` | **Functional.** Every MCP tool called through a real MCP client: counts, filters, aggregates, currency handling, search limits, person lookup, error messages, SQL-injection safety |
+| `server/tests/test_http.py` | **End-to-end.** Starts the real server process and calls it over Streamable HTTP at `/mcp` |
+| `chat/tests/test_chat.py` | **Functional.** The real tool-use loop against the real MCP server, with a scripted fake Claude: tool results and errors flow back correctly, the 8-round cap, history, input validation, error messages |
+| `chat/tests/test_e2e.py` | **End-to-end, opt-in.** Real Claude and the real MCP server answer the example questions; checks the key fact in each answer |
+| `web/src/App.test.tsx` | The chat UI: sending, answers, the "Tools used" panel, inline errors, follow-up history |
+
+The expected numbers in the server tests are computed straight from the CSV with plain Python, independently of the server's code, so the tests check the whole path from CSV to SQLite to tool result.
+
+The end-to-end Claude tests cost a few cents per run, so they're skipped unless you ask for them:
+
+```bash
+cd chat && RUN_E2E=1 uv run --env-file ../.env pytest -m e2e
+```
+
+## Code quality
+
+Python code is fully type-annotated and checked with **ruff** (lint and format) and **mypy** in strict mode, tests included. The web app is checked with **oxlint** and the TypeScript compiler.

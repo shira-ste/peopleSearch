@@ -1,5 +1,6 @@
 """MCP server exposing typed query tools over the people database (Streamable HTTP on /mcp)."""
 
+import os
 import sqlite3
 import statistics
 from collections.abc import Callable, Sequence
@@ -371,4 +372,4 @@ def get_person(name_or_email: str) -> PersonLookup:
 if __name__ == "__main__":
     if not DB_PATH.exists():
         print(f"Ingested {ingest()} people into {DB_PATH}")
-    mcp.run("streamable-http", host="127.0.0.1", port=8000)
+    mcp.run("streamable-http", host="127.0.0.1", port=int(os.environ.get("MCP_PORT", "8000")))
