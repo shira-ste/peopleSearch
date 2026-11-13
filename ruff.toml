@@ -1,0 +1,9 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify, annotations
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ANN"]
+
+[lint.isort]
+known-first-party = ["fx", "ingest"]

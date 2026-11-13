@@ -5,6 +5,7 @@ import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CSV_PATH = DATA_DIR / "people-list-export.csv"
@@ -25,26 +26,26 @@ CREATE TABLE people (
 """
 
 
-def clean(value):
+def clean(value: str | None) -> str | None:
     value = (value or "").strip()
     return value or None
 
 
-def parse_date(value):
+def parse_date(value: str | None) -> str | None:
     try:
-        return datetime.strptime(value.strip(), "%d/%m/%Y").date().isoformat()
-    except (AttributeError, ValueError):
+        return datetime.strptime((value or "").strip(), "%d/%m/%Y").date().isoformat()
+    except ValueError:
         return None
 
 
-def parse_float(value):
+def parse_float(value: str | None) -> float | None:
     try:
-        return float(value.replace(",", ""))
-    except (AttributeError, ValueError):
+        return float((value or "").replace(",", ""))
+    except ValueError:
         return None
 
 
-def to_row(r):
+def to_row(r: dict[str, str]) -> dict[str, Any]:
     full_name = clean(r["Full Name"]) or " ".join(filter(None, [clean(r["First Name"]), clean(r["Last Name"])]))
     nickname = re.search(r"'([^']+)'", full_name or "")
     amount = parse_float(r["Salary Amount"])
@@ -74,7 +75,7 @@ def to_row(r):
     }
 
 
-def ingest(csv_path=CSV_PATH, db_path=DB_PATH):
+def ingest(csv_path: Path = CSV_PATH, db_path: Path = DB_PATH) -> int:
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         rows = [to_row(r) for r in csv.DictReader(f)]
 
@@ -82,12 +83,8 @@ def ingest(csv_path=CSV_PATH, db_path=DB_PATH):
     con = sqlite3.connect(db_path)
     con.executescript(SCHEMA)
     cols = list(rows[0])
-    con.executemany(
-        f"INSERT INTO people ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)})", rows
-    )
-    con.execute(
-        "UPDATE people SET manager_id = (SELECT m.id FROM people m WHERE m.full_name = people.manager_name)"
-    )
+    con.executemany(f"INSERT INTO people ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)})", rows)
+    con.execute("UPDATE people SET manager_id = (SELECT m.id FROM people m WHERE m.full_name = people.manager_name)")
     con.commit()
     con.close()
     return len(rows)
