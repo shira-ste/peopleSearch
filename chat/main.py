@@ -1,18 +1,18 @@
-"""Chat backend: answers questions by letting Gemini call the people MCP server's tools."""
+"""Chat backend: answers questions by letting Claude call the people MCP server's tools."""
 
 import logging
 import os
 from typing import Any, Literal
 
+import anthropic
+from anthropic.types.beta import BetaMessageParam, BetaToolParam, BetaToolResultBlockParam
 from fastapi import FastAPI, HTTPException
-from google import genai
-from google.genai import errors, types
 from mcp import Client
 from mcp.types import CallToolResult
 from pydantic import BaseModel
 
 MCP_URL = os.environ.get("MCP_URL", "http://localhost:8000/mcp")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
 MAX_ROUNDS = 8
 
 SYSTEM = """You answer questions about a company's people records using the provided tools.
@@ -26,6 +26,7 @@ currency or a comparison across currencies, and then mention the exchange-rate d
 - Politely decline questions unrelated to the people data.
 - Be concise: lead with the answer, then brief supporting detail."""
 
+client = anthropic.AsyncAnthropic()
 app = FastAPI()
 
 
@@ -33,9 +34,10 @@ class Message(BaseModel):
     role: Literal["user", "assistant"]
     content: str
 
-    def to_content(self) -> types.Content:
-        # Gemini calls the assistant role "model".
-        return types.Content(role="user" if self.role == "user" else "model", parts=[types.Part(text=self.content)])
+    def to_param(self) -> BetaMessageParam:
+        if self.role == "user":
+            return {"role": "user", "content": self.content}
+        return {"role": "assistant", "content": self.content}
 
 
 class ChatRequest(BaseModel):
@@ -58,44 +60,39 @@ def tool_result_text(result: CallToolResult) -> str:
     return "\n".join(block.text for block in result.content if block.type == "text")
 
 
-async def run_agent(contents: list[types.Content], tool_calls: list[ToolCall]) -> str:
-    """Run Gemini's function-calling loop against the MCP server and return the final answer text."""
-    gemini = genai.Client()  # reads GEMINI_API_KEY
+async def run_agent(messages: list[BetaMessageParam], tool_calls: list[ToolCall]) -> str:
+    """Run Claude's tool-use loop against the MCP server and return the final answer text."""
     async with Client(MCP_URL) as mcp:
-        declarations = [
-            types.FunctionDeclaration(
-                name=t.name, description=t.description or "", parameters_json_schema=t.input_schema
-            )
+        tools: list[BetaToolParam] = [
+            {"name": t.name, "description": t.description or "", "input_schema": t.input_schema}
             for t in (await mcp.list_tools()).tools
         ]
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM,
-            tools=[types.Tool(function_declarations=declarations)],
-            # We run the loop ourselves so every MCP call can be recorded and shown in the UI.
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
         for _ in range(MAX_ROUNDS):
-            response = await gemini.aio.models.generate_content(model=MODEL, contents=contents, config=config)
-            if not response.function_calls:
-                return response.text or "Sorry, I couldn't produce an answer to that."
+            response = await client.beta.messages.create(
+                model=MODEL,
+                max_tokens=16000,
+                system=SYSTEM,
+                tools=tools,
+                messages=messages,
+                output_config={"effort": "medium"},
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+            if response.stop_reason == "refusal":
+                return "Sorry, I can't help with that request."
+            if response.stop_reason != "tool_use":
+                return "".join(b.text for b in response.content if b.type == "text")
 
-            # Send the model's turn back unchanged (it carries thought signatures Gemini needs).
-            if response.candidates and response.candidates[0].content:
-                contents.append(response.candidates[0].content)
-            parts: list[types.Part] = []
-            for call in response.function_calls:
-                name, args = call.name or "", call.args or {}
-                result = await mcp.call_tool(name, args)
+            messages.append({"role": "assistant", "content": response.content})
+            results: list[BetaToolResultBlockParam] = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                result = await mcp.call_tool(block.name, block.input)
                 text, is_error = tool_result_text(result), bool(result.is_error)
-                tool_calls.append(ToolCall(name=name, args=args, result=text, is_error=is_error))
-                parts.append(
-                    types.Part(
-                        function_response=types.FunctionResponse(
-                            id=call.id, name=name, response={"error": text} if is_error else {"result": text}
-                        )
-                    )
-                )
-            contents.append(types.Content(role="user", parts=parts))
+                tool_calls.append(ToolCall(name=block.name, args=block.input, result=text, is_error=is_error))
+                results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": is_error})
+            messages.append({"role": "user", "content": results})
     return "I couldn't work this out within the step limit. Try rephrasing the question."
 
 
@@ -104,17 +101,15 @@ def to_http_error(error: BaseException) -> HTTPException:
     while isinstance(error, BaseExceptionGroup) and len(error.exceptions) == 1:
         error = error.exceptions[0]
     match error:
-        case errors.ClientError(code=429):
-            logging.warning("Gemini quota/rate limit: %s", error)
-            return HTTPException(
-                429,
-                "Gemini's rate limit or quota was reached (free-tier keys have a small daily limit). Try again later.",
-            )
-        case errors.ClientError(code=400 | 401 | 403) if "API key" in str(error):
-            return HTTPException(500, "The Gemini API key is invalid. Check GEMINI_API_KEY.")
-        case errors.APIError(code=code):
-            logging.error("Gemini API error: %s", error)
-            return HTTPException(502, f"Gemini API error ({code}). Please try again.")
+        case anthropic.AuthenticationError():
+            return HTTPException(500, "The Claude API key is invalid. Check ANTHROPIC_API_KEY.")
+        case anthropic.RateLimitError():
+            logging.warning("Claude rate limit: %s", error)
+            return HTTPException(429, "Claude's rate limit was reached. Please try again in a moment.")
+        case anthropic.APIStatusError(status_code=status):
+            return HTTPException(502, f"Claude API error ({status}). Please try again.")
+        case anthropic.APIConnectionError():
+            return HTTPException(502, "Could not reach the Claude API.")
         case _:  # anything else comes from the MCP connection (server down, transport errors)
             logging.exception("MCP failure", exc_info=error)
             return HTTPException(503, f"The people data service is unavailable ({MCP_URL}).")
@@ -122,16 +117,16 @@ def to_http_error(error: BaseException) -> HTTPException:
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> ChatResponse:
-    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-        raise HTTPException(500, "GEMINI_API_KEY is not set on the chat backend.")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(500, "ANTHROPIC_API_KEY is not set on the chat backend.")
     if not req.messages or req.messages[-1].role != "user" or not req.messages[-1].content.strip():
         raise HTTPException(400, "The last message must be a non-empty user question.")
 
     # Only plain text history is resent; tool calls from earlier turns are not.
-    contents = [m.to_content() for m in req.messages]
+    messages = [m.to_param() for m in req.messages]
     tool_calls: list[ToolCall] = []
     try:
-        answer = await run_agent(contents, tool_calls)
+        answer = await run_agent(messages, tool_calls)
     except Exception as e:
         raise to_http_error(e) from e
     return ChatResponse(answer=answer, tool_calls=tool_calls)

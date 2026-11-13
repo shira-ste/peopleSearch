@@ -5,12 +5,12 @@ Ask questions about a company's people records in plain English, for example *"H
 The project has two parts:
 
 1. **An MCP server** that loads the people CSV into SQLite and exposes typed query tools over **Streamable HTTP at `/mcp`**.
-2. **A chat interface**: a React web app plus a small Python backend. The backend lets Gemini answer questions by calling the MCP server's tools.
+2. **A chat interface**: a React web app plus a small Python backend. The backend lets Claude answer questions by calling the MCP server's tools.
 
 ```mermaid
 flowchart LR
     UI["Web chat<br/>React · :5173"] -->|POST /api/chat| API["Chat backend<br/>FastAPI · :8001"]
-    API <-->|function calls| Gemini["Gemini API"]
+    API <-->|tool calls| Claude["Claude API"]
     API -->|Streamable HTTP /mcp| MCP["MCP server<br/>:8000"]
     MCP --> DB[("SQLite<br/>data/people.db")]
     CSV["data/people-list-export.csv"] -.->|ingested on first start| DB
@@ -18,10 +18,10 @@ flowchart LR
 
 ## Quick start
 
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) (it installs Python for you), Node.js 20+, and a [Gemini API key](https://aistudio.google.com/apikey).
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) (it installs Python for you), Node.js 20+, and an [Anthropic API key](https://platform.claude.com) (separate from a claude.ai subscription).
 
 ```bash
-cp .env.example .env          # then put your key in GEMINI_API_KEY
+cp .env.example .env          # then put your key in ANTHROPIC_API_KEY
 ```
 
 Run each service in its own terminal:
@@ -39,7 +39,7 @@ cd web && npm install && npm run dev
 
 Open **http://localhost:5173**, then click an example question or type your own.
 
-Under each answer, **"Tools used"** shows exactly which MCP tools Gemini called, with what arguments, and what the server returned.
+Under each answer, **"Tools used"** shows exactly which MCP tools Claude called, with what arguments, and what the server returned.
 
 ## Example questions
 
@@ -72,7 +72,7 @@ To explore the server on its own, run `npx @modelcontextprotocol/inspector` and 
 ```
 data/      people-list-export.csv (source). people.db is generated, not committed
 server/    MCP server: ingest.py (CSV → SQLite), fx.py (currency rates), server.py (tools)
-chat/      Chat backend: main.py (Gemini function-calling loop and POST /api/chat)
+chat/      Chat backend: main.py (Claude tool-use loop and POST /api/chat)
 web/       React + Vite + TypeScript chat UI (src/App.tsx)
 ```
 
@@ -82,9 +82,9 @@ Set these in `.env`, which the chat backend reads:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | (none) | Required. Your Gemini API key |
+| `ANTHROPIC_API_KEY` | (none) | Required. Your Claude API key |
 | `MCP_URL` | `http://localhost:8000/mcp` | Where the chat backend finds the MCP server |
-| `GEMINI_MODEL` | `gemini-3.6-flash` | The Gemini model to use |
+| `CLAUDE_MODEL` | `claude-opus-5-5` | The Claude model to use |
 
 ## Data
 
