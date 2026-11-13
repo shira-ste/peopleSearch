@@ -3,8 +3,8 @@ name = "chat"
 version = "0.1.0"
 requires-python = ">=3.15"
 dependencies = [
-    "anthropic>=2.8.0",
     "fastapi>=0.162.6",
+    "google-genai>=3.3.0",
     "mcp[cli]>=2.3.0",
     "uvicorn>=0.54.0",
 ]
