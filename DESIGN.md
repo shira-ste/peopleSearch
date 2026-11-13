@@ -98,6 +98,29 @@ Other behavior:
   - ask which person is meant when a name matches several people;
   - decline questions that aren't about the people data.
 
+## Caching
+
+Measurements showed where the time and money go, which decided what to cache:
+
+| Part | Measured | Cached? |
+|---|---|---|
+| Tool definitions + system prompt, resent on every Claude call | ≈4,200 tokens per call, 2–4 calls per question | **Yes**, with Claude prompt caching |
+| MCP connection + tool listing | ≈8 ms per question | No: nothing to gain |
+| A SQLite query (107 rows) | ≈20 ms | No: a cache would add stale-data risk for no gain |
+| Exchange rates | One web call | Yes, in memory for an hour (`server/fx.py`) |
+| Whole answers | — | No: answers depend on the conversation so far |
+
+**Prompt caching** uses two cache markers on every Claude call:
+
+1. **On the system prompt.** Tools and system prompt are identical on every call, so they become one cache entry that every question shares.
+2. **At the end of the conversation** (`cache_control` on the request). The growing conversation is cached, so each round of the tool loop reuses the previous round.
+
+A cached read costs 5% of the normal input price. Entries last 5 minutes after their last use. The first version had only the second marker, so every new question re-wrote the 4,200-token prefix; adding the first marker raised the input-cost saving from 45% to **93%** on the end-to-end test suite.
+
+The cache only works if the prefix is byte-identical between calls. So the system prompt contains nothing that changes, such as dates, and the tools come back in a fixed order. `test_cached_prefix_is_identical_across_rounds` guards this.
+
+The backend logs each call's cache usage (`cache_read` / `cache_write`). The opt-in end-to-end tests check against the real API that the cache is hit both within a question and across questions.
+
 ## Edge cases
 
 | Situation | Behavior |

@@ -103,3 +103,39 @@ def test_follow_up_question_uses_history(api: TestClient) -> None:
 def test_unrelated_question_is_declined_without_tools(api: TestClient) -> None:
     answer = ask(api, "What's the weather in London tomorrow?")
     assert answer["tool_calls"] == []
+
+
+def test_prompt_cache_is_reused_across_rounds(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every call resends ~4K tokens of tools + system prompt; after the first round they must come from cache."""
+    real_create = main.client.beta.messages.create
+    usages: list[Any] = []
+
+    async def recording_create(**kwargs: Any) -> Any:
+        response = await real_create(**kwargs)
+        usages.append(response.usage)
+        return response
+
+    monkeypatch.setattr(main.client.beta.messages, "create", recording_create)
+    ask(api, "How many people live in London, and how many of them are paid hourly?")
+
+    assert len(usages) >= 2, "expected at least one tool round"
+    first, *later = usages
+    assert first.cache_creation_input_tokens + first.cache_read_input_tokens > 3000  # prefix written (or already warm)
+    assert all(u.cache_read_input_tokens > 3000 for u in later)  # later rounds read it back
+
+
+def test_prompt_cache_is_shared_across_questions(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A brand-new question must reuse the cached tools + system prompt, not write them again."""
+    real_create = main.client.beta.messages.create
+    usages: list[Any] = []
+
+    async def recording_create(**kwargs: Any) -> Any:
+        response = await real_create(**kwargs)
+        usages.append(response.usage)
+        return response
+
+    monkeypatch.setattr(main.client.beta.messages, "create", recording_create)
+    ask(api, "How many people work in Tel Aviv?")
+    first_call_of_second_question = len(usages)
+    ask(api, "How many people are on the Pastry team?")
+    assert usages[first_call_of_second_question].cache_read_input_tokens > 3000

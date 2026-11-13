@@ -33,14 +33,17 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
 # ---------- Fake Claude ----------
 
 
+USAGE = SimpleNamespace(input_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0, output_tokens=5)
+
+
 def text_reply(text: str) -> SimpleNamespace:
-    return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=text)])
+    return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=text)], usage=USAGE)
 
 
 def tool_reply(*calls: tuple[str, dict[str, Any]]) -> SimpleNamespace:
     blocks = [SimpleNamespace(type="tool_use", id=f"call_{i}", name=name, input=args) for i, (name, args) in
               enumerate(calls)]  # fmt: skip
-    return SimpleNamespace(stop_reason="tool_use", content=blocks)
+    return SimpleNamespace(stop_reason="tool_use", content=blocks, usage=USAGE)
 
 
 class FakeClaude:

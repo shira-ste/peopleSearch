@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import anthropic
@@ -86,6 +87,7 @@ def test_refusal_gets_a_polite_answer(api: TestClient, fake_claude: FakeFactory)
 class SimpleRefusal:
     stop_reason = "refusal"
     content: list[Any] = []
+    usage = SimpleNamespace(input_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0, output_tokens=0)
 
 
 def test_conversation_history_is_sent_as_plain_text(api: TestClient, fake_claude: FakeFactory) -> None:
@@ -97,6 +99,25 @@ def test_conversation_history_is_sent_as_plain_text(api: TestClient, fake_claude
         {"role": "user", "content": "And in NYC?"},
     ]
     assert {t["name"] for t in fake.requests[0]["tools"]} >= {"count_people", "get_person"}
+
+
+def test_every_claude_call_enables_prompt_caching(api: TestClient, fake_claude: FakeFactory) -> None:
+    fake = fake_claude(tool_reply(("count_people", {})), text_reply("107."))
+    ask(api, "How many people?")
+    assert len(fake.requests) == 2
+    for request in fake.requests:
+        assert request["cache_control"] == {"type": "ephemeral"}  # caches the growing conversation
+        assert request["system"][-1]["cache_control"] == {"type": "ephemeral"}  # caches tools + system prompt
+
+
+def test_cached_prefix_is_identical_across_rounds(api: TestClient, fake_claude: FakeFactory) -> None:
+    """The cache only hits if tools and system prompt are byte-identical on every call."""
+    fake = fake_claude(tool_reply(("count_people", {})), tool_reply(("get_dataset_overview", {})), text_reply("Done."))
+    ask(api, "Overview please")
+    first, *rest = fake.requests
+    for later in rest:
+        assert json.dumps(later["tools"], sort_keys=False) == json.dumps(first["tools"], sort_keys=False)
+        assert later["system"] == first["system"]
 
 
 # ---------- Input validation ----------

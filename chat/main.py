@@ -5,7 +5,7 @@ import os
 from typing import Any, Literal
 
 import anthropic
-from anthropic.types.beta import BetaMessageParam, BetaToolParam, BetaToolResultBlockParam
+from anthropic.types.beta import BetaMessageParam, BetaTextBlockParam, BetaToolParam, BetaToolResultBlockParam
 from fastapi import FastAPI, HTTPException
 from mcp import Client
 from mcp.types import CallToolResult
@@ -26,7 +26,12 @@ currency or a comparison across currencies, and then mention the exchange-rate d
 - Politely decline questions unrelated to the people data.
 - Be concise: lead with the answer, then brief supporting detail."""
 
+# The cache breakpoint here makes tools + system prompt (identical on every call) one cache entry
+# that all questions share for 5 minutes after the last use.
+SYSTEM_BLOCKS: list[BetaTextBlockParam] = [{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}]
+
 client = anthropic.AsyncAnthropic()
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 app = FastAPI()
 
 
@@ -71,13 +76,22 @@ async def run_agent(messages: list[BetaMessageParam], tool_calls: list[ToolCall]
             response = await client.beta.messages.create(
                 model=MODEL,
                 max_tokens=16000,
-                system=SYSTEM,
+                system=SYSTEM_BLOCKS,
                 tools=tools,
                 messages=messages,
                 output_config={"effort": "medium"},
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
+                # Prompt caching, two breakpoints: SYSTEM_BLOCKS caches tools + system prompt for every question;
+                # this one caches the conversation so far, so later rounds of the tool loop reuse it too.
+                cache_control={"type": "ephemeral"},
             )
+            usage = response.usage
+            logging.info(
+                "Claude call: input=%s cache_read=%s cache_write=%s output=%s",
+                usage.input_tokens, usage.cache_read_input_tokens, usage.cache_creation_input_tokens,
+                usage.output_tokens,
+            )  # fmt: skip
             if response.stop_reason == "refusal":
                 return "Sorry, I can't help with that request."
             if response.stop_reason != "tool_use":

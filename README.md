@@ -112,7 +112,7 @@ cd web    && npm test && npm run lint && npm run build
 | `server/tests/test_tools.py` | **Functional.** Every MCP tool called through a real MCP client: counts, filters, aggregates, currency handling, search limits, person lookup, error messages, SQL-injection safety |
 | `server/tests/test_http.py` | **End-to-end.** Starts the real server process and calls it over Streamable HTTP at `/mcp` |
 | `chat/tests/test_chat.py` | **Functional.** The real tool-use loop against the real MCP server, with a scripted fake Claude: tool results and errors flow back correctly, the 8-round cap, history, input validation, error messages |
-| `chat/tests/test_e2e.py` | **End-to-end, opt-in.** Real Claude and the real MCP server answer the example questions; checks the key fact in each answer |
+| `chat/tests/test_e2e.py` | **End-to-end, opt-in.** Real Claude and the real MCP server answer the example questions; checks the key fact in each answer, and that prompt caching is actually hit |
 | `web/src/App.test.tsx` | The chat UI: sending, answers, the "Tools used" panel, inline errors, follow-up history |
 
 The expected numbers in the server tests are computed straight from the CSV with plain Python, independently of the server's code, so the tests check the whole path from CSV to SQLite to tool result.
