@@ -121,7 +121,8 @@ Other behavior:
 | Currency API is down | Results in original currencies, with a note that conversion is unavailable |
 | MCP server is down | HTTP 503: "The people data service is unavailable" |
 | API key missing or invalid | HTTP 500 with a message naming `GEMINI_API_KEY` |
-| Gemini rate-limited or unavailable | The backend returns HTTP 429 or 502 with a short message |
+| Gemini rate limit or quota reached | HTTP 429 explaining the limit (free-tier keys allow only about 20 requests per model per day; each question uses 2–4) |
+| Gemini unavailable | HTTP 502 with a short message |
 | 8 tool rounds without an answer | "I couldn't work this out within the step limit. Try rephrasing." |
 | Empty question | The Send button is disabled, and the backend also rejects it with 400 |
 

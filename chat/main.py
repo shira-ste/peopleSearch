@@ -105,7 +105,11 @@ def to_http_error(error: BaseException) -> HTTPException:
         error = error.exceptions[0]
     match error:
         case errors.ClientError(code=429):
-            return HTTPException(429, "Gemini is rate-limited right now. Please try again in a moment.")
+            logging.warning("Gemini quota/rate limit: %s", error)
+            return HTTPException(
+                429,
+                "Gemini's rate limit or quota was reached (free-tier keys have a small daily limit). Try again later.",
+            )
         case errors.ClientError(code=400 | 401 | 403) if "API key" in str(error):
             return HTTPException(500, "The Gemini API key is invalid. Check GEMINI_API_KEY.")
         case errors.APIError(code=code):
