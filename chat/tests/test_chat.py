@@ -119,6 +119,18 @@ def test_system_prompt_includes_the_data_servers_valid_values(api: TestClient, f
     assert "New York" in server_notes["text"] and "London HQ & Flagship" in server_notes["text"]
 
 
+def test_simple_tools_use_strict_mode(api: TestClient, fake_claude: FakeFactory) -> None:
+    """Strict mode guarantees required arguments are present (get_person was once called with {})."""
+    fake = fake_claude(text_reply("Hi."))
+    ask(api, "Hello")
+    tools = {t["name"]: t for t in fake.requests[0]["tools"]}
+    assert tools["get_person"]["strict"] is True
+    assert tools["get_person"]["input_schema"]["additionalProperties"] is False
+    assert tools["get_person"]["input_schema"]["required"] == ["name_or_email"]
+    # Tools sharing the big filter are too complex for strict mode; the server validates those instead.
+    assert "strict" not in tools["search_people"]
+
+
 def test_cached_prefix_is_identical_across_rounds(api: TestClient, fake_claude: FakeFactory) -> None:
     """The cache only hits if tools and system prompt are byte-identical on every call."""
     fake = fake_claude(tool_reply(("count_people", {})), tool_reply(("get_dataset_overview", {})), text_reply("Done."))

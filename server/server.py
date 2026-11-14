@@ -28,6 +28,14 @@ AGE_SQL = (
     " - (strftime('%m-%d','now') < strftime('%m-%d', date_of_birth)))"
 )
 TENURE_SQL = "((julianday('now') - julianday(start_date)) / 365.25)"
+# People (and Claude) write names in different forms. For "Beatrix 'Bea' Vane" also match:
+# "Beatrix Vane" (without the nickname) and "Bea Vane" (nickname + surname).
+PLAIN_NAME_SQL = "CASE WHEN nickname IS NULL THEN full_name ELSE replace(full_name, '''' || nickname || ''' ', '') END"
+NICK_NAME_SQL = (
+    "CASE WHEN nickname IS NULL THEN full_name ELSE nickname || substr(full_name, instr(full_name, ''' ') + 1) END"
+)
+# Part of the name, in any of those forms. Takes the same LIKE pattern three times.
+NAME_LIKE_SQL = f"(full_name LIKE ? OR {PLAIN_NAME_SQL} LIKE ? OR {NICK_NAME_SQL} LIKE ?)"
 METRIC_SQL: dict[Metric, str] = {"age": AGE_SQL, "tenure_years": TENURE_SQL, "annual_salary": "annual_salary"}
 GROUP_SQL: dict[GroupBy, str] = {
     "city": "city", "country": "country", "office": "office", "team": "team", "gender": "gender",
@@ -214,11 +222,16 @@ def where(f: PeopleFilter | None) -> tuple[str, list[Any]]:
         if value is not None:
             clauses.append(f"{col} = ? COLLATE NOCASE")
             params.append(value)
-    # LIKE is case-insensitive in SQLite; nicknames are part of full_name.
-    for col, text in (("full_name", f.name), ("job_title", f.job_title_contains), ("manager_name", f.manager_name)):
-        if text:
-            clauses.append(f"{col} LIKE ?")
-            params.append(f"%{text}%")
+    # LIKE is case-insensitive in SQLite.
+    if f.name:
+        clauses.append(NAME_LIKE_SQL)
+        params += [f"%{f.name}%"] * 3
+    if f.job_title_contains:
+        clauses.append("job_title LIKE ?")
+        params.append(f"%{f.job_title_contains}%")
+    if f.manager_name:  # match the manager's own record, so "Beatrix Vane" finds Bea's reports too
+        clauses.append(f"manager_id IN (SELECT id FROM people WHERE {NAME_LIKE_SQL})")
+        params += [f"%{f.manager_name}%"] * 3
     if f.min_age is not None:
         clauses.append(f"{AGE_SQL} >= ?")
         params.append(f.min_age)
@@ -363,15 +376,20 @@ def get_person(name_or_email: str) -> PersonLookup:
     """Look up one person by (part of) their name, nickname or email. Returns their full record, manager and
     direct reports. If several people match, returns the candidates so you can ask which one."""
     matches = query(
-        f"SELECT *, {AGE_SQL} AS age, {TENURE_SQL} AS tenure FROM people "
-        "WHERE full_name LIKE ? OR email = ? COLLATE NOCASE",
-        (f"%{name_or_email}%", name_or_email),
+        f"SELECT *, {AGE_SQL} AS age, {TENURE_SQL} AS tenure, {PLAIN_NAME_SQL} AS plain_name, "
+        f"{NICK_NAME_SQL} AS nick_name FROM people "
+        f"WHERE {NAME_LIKE_SQL} OR email = ? COLLATE NOCASE",
+        (*[f"%{name_or_email}%"] * 3, name_or_email),
     )
     if not matches:
         raise ToolError(f"No person matches '{name_or_email}'. Try search_people with a partial name.")
 
     needle = name_or_email.lower()
-    exact = [m for m in matches if needle in {str(m[c]).lower() for c in ("full_name", "email", "nickname")}]
+    exact = [
+        m
+        for m in matches
+        if needle in {str(m[c]).lower() for c in ("full_name", "plain_name", "nick_name", "email", "nickname")}
+    ]
     if len(matches) > 1 and len(exact) != 1:
         return PersonLookup(
             candidates=[Candidate(name=m["full_name"], job_title=m["job_title"], office=m["office"]) for m in matches]

@@ -180,6 +180,7 @@ The backend logs each call's cache usage (`cache_read` / `cache_write`). The opt
 | The pending hire has no age or salary | Rows with no value are skipped in averages and other aggregates, so they don't distort them |
 | A name matches several people ("Alistair") | `get_person` returns the candidates, and Claude asks which one |
 | A nickname is used ("Bea") | Counts as an exact match, so it resolves straight to Beatrix 'Bea' Vane |
+| A name written without its nickname ("Beatrix Vane") or as nickname + surname ("Bea Vane") | Also matches. Names are compared in all three forms, in `get_person`, the `name` filter and the manager filter. Claude naturally writes names this way, so before this fix such lookups failed. |
 | A place not in the data ("Paris") | Count is 0, and the overview shows Claude it isn't one of the locations |
 | Salaries across currencies | Split by currency, unless `convert_to` is given |
 | A large result | `limit` is capped at 100, and `total_matches` always gives the full count |
@@ -190,7 +191,7 @@ The backend logs each call's cache usage (`cache_read` / `cache_write`). The opt
 
 | Failure | What the user sees |
 |---|---|
-| Invalid tool arguments | The error goes back to Claude, which corrects the call and continues |
+| Invalid tool arguments | Prevented where possible: tools with simple schemas (`get_person`, `get_dataset_overview`) use the API's **strict mode**, which guarantees the arguments match the schema. `get_person` was once called with no name at all. The tools that share the 13-field filter are too complex for strict mode, so for those the MCP server rejects bad arguments, the error goes back to Claude, and Claude corrects the call. |
 | A tool can't answer (no such person, salary sort without conversion) | A clear `ToolError` message that Claude uses to recover |
 | Currency API is down | Results in original currencies, with a note that conversion is unavailable |
 | MCP server is down | HTTP 503: "The people data service is unavailable" |

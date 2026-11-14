@@ -121,6 +121,37 @@ def tool_result_text(result: CallToolResult) -> str:
     return "\n".join(block.text for block in result.content if block.type == "text")
 
 
+type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
+
+
+def strict_schema(schema: Json) -> Json:
+    """Strict tool use requires every object in the schema to forbid extra properties."""
+    if isinstance(schema, dict):
+        out = {key: strict_schema(value) for key, value in schema.items()}
+        if out.get("type") == "object":
+            out["additionalProperties"] = False
+        return out
+    if isinstance(schema, list):
+        return [strict_schema(value) for value in schema]
+    return schema
+
+
+def to_claude_tool(name: str, description: str | None, schema: dict[str, Any]) -> BetaToolParam:
+    """Convert an MCP tool to a Claude tool, with strict mode where the API supports it.
+
+    Strict mode guarantees Claude's arguments match the schema (e.g. get_person can't be called without
+    `name_or_email`, which happened occasionally). The API rejects it for the tools sharing the 13-field
+    filter ("Schema is too complex"), so those keep relying on the MCP server's validation: a bad call
+    comes back as an error that Claude corrects on the next round.
+    """
+    if "$defs" in schema:
+        return {"name": name, "description": description or "", "input_schema": schema}
+    strict = strict_schema(schema)
+    assert isinstance(strict, dict)
+    input_schema: dict[str, object] = {**strict}
+    return {"name": name, "description": description or "", "input_schema": input_schema, "strict": True}
+
+
 def log_usage(usage: BetaUsage) -> None:
     logging.info(
         "Claude call: input=%s cache_read=%s cache_write=%s output=%s",
@@ -132,10 +163,7 @@ async def run_agent(messages: list[BetaMessageParam], emit: Emit) -> None:
     """Run Claude's tool-use loop against the MCP server, reporting progress and answer text through `emit`."""
     async with Client(MCP_URL) as mcp:
         system = system_blocks(mcp.instructions)
-        tools: list[BetaToolParam] = [
-            {"name": t.name, "description": t.description or "", "input_schema": t.input_schema}
-            for t in (await mcp.list_tools()).tools
-        ]
+        tools = [to_claude_tool(t.name, t.description, t.input_schema) for t in (await mcp.list_tools()).tools]
         wrote_text = False
         for _ in range(MAX_ROUNDS):
             async with client.beta.messages.stream(

@@ -194,6 +194,25 @@ async def test_nickname_resolves_to_one_person_with_reports(rows: Rows) -> None:
     assert [r["name"] for r in person["direct_reports"]] == expected
 
 
+@pytest.mark.parametrize("written_as", ["Beatrix 'Bea' Vane", "Beatrix Vane", "Bea Vane", "Bea", "beatrix vane"])
+async def test_names_match_with_or_without_the_nickname(written_as: str) -> None:
+    result = await call("get_person", {"name_or_email": written_as})
+    assert result["person"]["name"] == "Beatrix 'Bea' Vane"
+
+
+async def test_apostrophe_surnames_with_a_nickname() -> None:
+    for written_as in ("Sullivan O'Shea", "Sully O'Shea"):
+        result = await call("get_person", {"name_or_email": written_as})
+        assert result["person"]["name"] == "Sullivan 'Sully' O'Shea"
+
+
+async def test_manager_filter_accepts_any_name_form(rows: Rows) -> None:
+    expected = sum(r["Reports To"] == "Beatrix 'Bea' Vane" for r in rows)
+    for written_as in ("Bea", "Beatrix Vane", "Bea Vane"):
+        result = await call("count_people", {"filter": {"manager_name": written_as}})
+        assert result["total"] == expected == 8
+
+
 async def test_ambiguous_name_returns_candidates() -> None:
     result = await call("get_person", {"name_or_email": "Alistair"})
     assert result["person"] is None
