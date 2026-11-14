@@ -129,15 +129,8 @@ def test_unrelated_question_is_declined_without_tools(api: TestClient) -> None:
 
 def test_prompt_cache_is_reused_across_rounds(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every call resends ~4K tokens of tools + system prompt; after the first round they must come from cache."""
-    real_create = main.client.beta.messages.create
     usages: list[Any] = []
-
-    async def recording_create(**kwargs: Any) -> Any:
-        response = await real_create(**kwargs)
-        usages.append(response.usage)
-        return response
-
-    monkeypatch.setattr(main.client.beta.messages, "create", recording_create)
+    monkeypatch.setattr(main, "log_usage", usages.append)  # record each Claude call's token usage
     ask(api, "How many people live in London, and how many of them are paid hourly?")
 
     assert len(usages) >= 2, "expected at least one tool round"
@@ -148,15 +141,8 @@ def test_prompt_cache_is_reused_across_rounds(api: TestClient, monkeypatch: pyte
 
 def test_prompt_cache_is_shared_across_questions(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """A brand-new question must reuse the cached tools + system prompt, not write them again."""
-    real_create = main.client.beta.messages.create
     usages: list[Any] = []
-
-    async def recording_create(**kwargs: Any) -> Any:
-        response = await real_create(**kwargs)
-        usages.append(response.usage)
-        return response
-
-    monkeypatch.setattr(main.client.beta.messages, "create", recording_create)
+    monkeypatch.setattr(main, "log_usage", usages.append)  # record each Claude call's token usage
     ask(api, "How many people work in Tel Aviv?")
     first_call_of_second_question = len(usages)
     ask(api, "How many people are on the Pastry team?")

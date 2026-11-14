@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Mirrors the chat backend's response models (chat/main.py).
+// Mirrors the chat backend's streamed events (chat/main.py): one JSON object per line.
+type StreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_call'; name: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; name: string; args: Record<string, unknown>; result: string; is_error: boolean }
+  | { type: 'error'; status: number; detail: string }
+  | { type: 'done' }
+
 interface ToolCall {
   name: string
   args: Record<string, unknown>
-  result: string
-  is_error: boolean
-}
-
-interface ChatResponse {
-  answer: string
-  tool_calls: ToolCall[]
+  result?: string // missing while the tool is still running
+  is_error?: boolean
 }
 
 interface ChatMessage {
@@ -18,6 +20,7 @@ interface ChatMessage {
   content: string
   toolCalls?: ToolCall[]
   isError?: boolean
+  pending?: boolean // still streaming
 }
 
 const EXAMPLES = [
@@ -29,8 +32,9 @@ const EXAMPLES = [
   'Who reports to Bea?',
 ]
 
-async function askBackend(history: ChatMessage[]): Promise<ChatResponse> {
-  const res = await fetch('/api/chat', {
+/** POST the conversation and call onEvent for each streamed event as it arrives. */
+async function streamChat(history: ChatMessage[], onEvent: (event: StreamEvent) => void): Promise<void> {
+  const res = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // Error bubbles are UI-only; send just the real conversation.
@@ -38,12 +42,45 @@ async function askBackend(history: ChatMessage[]): Promise<ChatResponse> {
       messages: history.filter((m) => !m.isError).map(({ role, content }) => ({ role, content })),
     }),
   })
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
+    // Requests rejected before streaming starts (bad input, missing API key) come back as plain JSON errors.
     const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
-    const detail = typeof body?.detail === 'string' ? body.detail : `Request failed (${res.status})`
-    throw new Error(detail)
+    throw new Error(typeof body?.detail === 'string' ? body.detail : `Request failed (${res.status})`)
   }
-  return (await res.json()) as ChatResponse
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += value
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? '' // keep a partial line until the rest arrives
+    for (const line of lines) {
+      if (line.trim()) onEvent(JSON.parse(line) as StreamEvent)
+    }
+  }
+}
+
+/** Apply one streamed event to the assistant message being built. */
+function applyEvent(message: ChatMessage, event: StreamEvent): ChatMessage {
+  const toolCalls = message.toolCalls ?? []
+  switch (event.type) {
+    case 'text':
+      return { ...message, content: message.content + event.text }
+    case 'tool_call':
+      return { ...message, toolCalls: [...toolCalls, { name: event.name, args: event.args }] }
+    case 'tool_result': {
+      // Fill in the oldest call of this tool that is still waiting for its result.
+      const index = toolCalls.findIndex((c) => c.name === event.name && c.result === undefined)
+      const done = { name: event.name, args: event.args, result: event.result, is_error: event.is_error }
+      return { ...message, toolCalls: index < 0 ? [...toolCalls, done] : toolCalls.with(index, done) }
+    }
+    case 'error':
+      return { ...message, content: event.detail, isError: true, pending: false }
+    case 'done':
+      return { ...message, pending: false }
+  }
 }
 
 function prettyJson(text: string): string {
@@ -52,6 +89,21 @@ function prettyJson(text: string): string {
   } catch {
     return text
   }
+}
+
+/** Live progress while tools run, e.g. "Looking up count_people…". */
+function ToolProgress({ calls }: { calls: ToolCall[] }) {
+  return (
+    <ul className="tool-progress">
+      {calls.map((call, i) => (
+        <li key={i}>
+          {call.result === undefined ? '🔧 Looking up' : call.is_error ? '⚠️ Problem with' : '✓ Checked'}{' '}
+          <code>{call.name}</code>
+          {call.result === undefined && '…'}
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function ToolCalls({ calls }: { calls: ToolCall[] }) {
@@ -63,7 +115,7 @@ function ToolCalls({ calls }: { calls: ToolCall[] }) {
           <code className="tool-name">{call.name}</code>
           <pre>{JSON.stringify(call.args, null, 2)}</pre>
           <div className="tool-label">{call.is_error ? 'Error' : 'Result'}</div>
-          <pre>{prettyJson(call.result)}</pre>
+          <pre>{prettyJson(call.result ?? '')}</pre>
         </div>
       ))}
     </details>
@@ -79,21 +131,26 @@ export default function App() {
   useEffect(() => {
     // Block body on purpose: an effect's return value is treated as a cleanup function.
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  }, [messages])
+
+  /** Update the last message (the assistant reply being streamed). */
+  function updateReply(update: (reply: ChatMessage) => ChatMessage) {
+    setMessages((current) => current.with(-1, update(current[current.length - 1])))
+  }
 
   async function send(question: string) {
     const text = question.trim()
     if (!text || loading) return
     const history: ChatMessage[] = [...messages, { role: 'user', content: text }]
-    setMessages(history)
+    setMessages([...history, { role: 'assistant', content: '', toolCalls: [], pending: true }])
     setInput('')
     setLoading(true)
     try {
-      const { answer, tool_calls } = await askBackend(history)
-      setMessages([...history, { role: 'assistant', content: answer, toolCalls: tool_calls }])
+      await streamChat(history, (event) => updateReply((reply) => applyEvent(reply, event)))
+      updateReply((reply) => ({ ...reply, pending: false }))
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong.'
-      setMessages([...history, { role: 'assistant', content: message, isError: true }])
+      updateReply(() => ({ role: 'assistant', content: message, isError: true }))
     } finally {
       setLoading(false)
     }
@@ -116,13 +173,18 @@ export default function App() {
             ))}
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} className={`message ${m.role}${m.isError ? ' error' : ''}`}>
-            <div className="content">{m.content}</div>
-            {m.toolCalls && m.toolCalls.length > 0 && <ToolCalls calls={m.toolCalls} />}
-          </div>
-        ))}
-        {loading && <div className="message assistant loading">Thinking…</div>}
+        {messages.map((m, i) => {
+          const calls = m.toolCalls ?? []
+          const waiting = m.pending && !m.content
+          return (
+            <div key={i} className={`message ${m.role}${m.isError ? ' error' : ''}${waiting ? ' loading' : ''}`}>
+              {m.pending && calls.length > 0 && <ToolProgress calls={calls} />}
+              {waiting && calls.length === 0 && <div>Thinking…</div>}
+              {m.content && <div className="content">{m.content}</div>}
+              {!m.pending && calls.length > 0 && <ToolCalls calls={calls} />}
+            </div>
+          )
+        })}
         <div ref={bottomRef} />
       </section>
 

@@ -1,6 +1,6 @@
 """Fixtures: run the chat backend against the real MCP server in-process, with a scriptable fake Claude."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -46,6 +46,33 @@ def tool_reply(*calls: tuple[str, dict[str, Any]]) -> SimpleNamespace:
     return SimpleNamespace(stop_reason="tool_use", content=blocks, usage=USAGE)
 
 
+class FakeStream:
+    """Mimics the SDK's message stream: `async with`, `text_stream` and `get_final_message()`."""
+
+    def __init__(self, response: SimpleNamespace) -> None:
+        self.response = response
+
+    async def __aenter__(self) -> "FakeStream":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    @property
+    def text_stream(self) -> AsyncIterator[str]:
+        async def chunks() -> AsyncIterator[str]:
+            for block in self.response.content:
+                if block.type == "text":
+                    middle = len(block.text) // 2  # deliver each text in two pieces, like a real stream
+                    yield block.text[:middle]
+                    yield block.text[middle:]
+
+        return chunks()
+
+    async def get_final_message(self) -> SimpleNamespace:
+        return self.response
+
+
 class FakeClaude:
     """Returns scripted responses in order and records every request it received."""
 
@@ -53,17 +80,17 @@ class FakeClaude:
         self.responses = responses
         self.requests: list[dict[str, Any]] = []
 
-    async def create(self, **kwargs: Any) -> SimpleNamespace:
+    def stream(self, **kwargs: Any) -> FakeStream:
         # Snapshot the messages: the backend keeps appending to the same list.
         self.requests.append({**kwargs, "messages": list(kwargs["messages"])})
-        return self.responses[min(len(self.requests), len(self.responses)) - 1]
+        return FakeStream(self.responses[min(len(self.requests), len(self.responses)) - 1])
 
 
 @pytest.fixture
 def fake_claude(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FakeClaude]:
     def install(*responses: SimpleNamespace) -> FakeClaude:
         fake = FakeClaude(list(responses))
-        monkeypatch.setattr(main.client.beta.messages, "create", fake.create)
+        monkeypatch.setattr(main.client.beta.messages, "stream", fake.stream)
         return fake
 
     return install

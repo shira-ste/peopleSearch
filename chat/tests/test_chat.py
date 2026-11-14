@@ -120,6 +120,62 @@ def test_cached_prefix_is_identical_across_rounds(api: TestClient, fake_claude: 
         assert later["system"] == first["system"]
 
 
+# ---------- Streaming endpoint ----------
+
+
+def stream_events(api: TestClient, *turns: str) -> list[dict[str, Any]]:
+    roles = ["user", "assistant"]
+    messages = [{"role": roles[i % 2], "content": text} for i, text in enumerate(turns)]
+    with api.stream("POST", "/api/chat/stream", json={"messages": messages}) as res:
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith("application/x-ndjson")
+        return [json.loads(line) for line in res.iter_lines() if line]
+
+
+def test_stream_reports_progress_in_order(api: TestClient, fake_claude: FakeFactory) -> None:
+    fake_claude(tool_reply(("count_people", {"filter": {"city": "London"}})), text_reply("55 people live in London."))
+    events = stream_events(api, "How many people live in London?")
+
+    assert [e["type"] for e in events] == ["tool_call", "tool_result", "text", "text", "done"]
+    assert events[0] == {"type": "tool_call", "name": "count_people", "args": {"filter": {"city": "London"}}}
+    assert json.loads(events[1]["result"])["total"] == 55
+    assert "".join(e["text"] for e in events if e["type"] == "text") == "55 people live in London."
+
+
+def test_stream_separates_text_from_different_rounds(api: TestClient, fake_claude: FakeFactory) -> None:
+    preamble = tool_reply(("count_people", {}))
+    preamble.content.insert(0, SimpleNamespace(type="text", text="Let me check."))
+    fake_claude(preamble, text_reply("107 people."))
+    events = stream_events(api, "How many people?")
+    assert "".join(e["text"] for e in events if e["type"] == "text") == "Let me check.\n\n107 people."
+
+
+def test_stream_reports_failures_as_an_error_event(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mcp import Client
+
+    monkeypatch.setattr(main, "Client", lambda url: Client("http://127.0.0.1:9/mcp"))  # MCP server down
+    events = stream_events(api, "How many people live in London?")
+    assert events[-1]["type"] == "error"
+    assert events[-1]["status"] == 503
+    assert "unavailable" in events[-1]["detail"]
+
+
+def test_stream_rejects_bad_requests_before_streaming(api: TestClient) -> None:
+    res = api.post("/api/chat/stream", json={"messages": [{"role": "user", "content": " "}]})
+    assert res.status_code == 400
+
+
+def test_json_and_stream_endpoints_agree(api: TestClient, fake_claude: FakeFactory) -> None:
+    fake_claude(tool_reply(("count_people", {"filter": {"city": "Tel Aviv"}})), text_reply("24."))
+    body = ask(api, "Tel Aviv?").json()
+    fake_claude(tool_reply(("count_people", {"filter": {"city": "Tel Aviv"}})), text_reply("24."))
+    events = stream_events(api, "Tel Aviv?")
+    assert body["answer"] == "".join(e["text"] for e in events if e["type"] == "text")
+    assert body["tool_calls"] == [
+        {k: v for k, v in e.items() if k != "type"} for e in events if e["type"] == "tool_result"
+    ]
+
+
 # ---------- Input validation ----------
 
 

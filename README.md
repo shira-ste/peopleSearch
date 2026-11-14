@@ -9,7 +9,7 @@ The project has two parts:
 
 ```mermaid
 flowchart LR
-    UI["Web chat<br/>React · :5173"] -->|POST /api/chat| API["Chat backend<br/>FastAPI · :8001"]
+    UI["Web chat<br/>React · :5173"] -->|POST /api/chat/stream| API["Chat backend<br/>FastAPI · :8001"]
     API <-->|tool calls| Claude["Claude API"]
     API -->|Streamable HTTP /mcp| MCP["MCP server<br/>:8000"]
     MCP --> DB[("SQLite<br/>data/people.db")]
@@ -39,7 +39,7 @@ cd web && npm install && npm run dev
 
 Open **http://localhost:5173**, then click an example question or type your own.
 
-Under each answer, **"Tools used"** shows exactly which MCP tools Claude called, with what arguments, and what the server returned.
+While Claude works, you see each lookup as it happens ("🔧 Looking up `count_people`…"), then the answer appears as it's written. Under each answer, **"Tools used"** shows exactly which MCP tools Claude called, with what arguments, and what the server returned.
 
 ## Example questions
 
@@ -72,7 +72,7 @@ To explore the server on its own, run `npx @modelcontextprotocol/inspector` and 
 ```
 data/      people-list-export.csv (source). people.db is generated, not committed
 server/    MCP server: ingest.py (CSV → SQLite), fx.py (currency rates), server.py (tools)
-chat/      Chat backend: main.py (Claude tool-use loop and POST /api/chat)
+chat/      Chat backend: main.py (Claude tool-use loop; streaming and JSON endpoints)
 web/       React + Vite + TypeScript chat UI (src/App.tsx)
 ```
 
@@ -84,7 +84,8 @@ Set these in `.env`, which the chat backend reads:
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (none) | Required. Your Claude API key |
 | `MCP_URL` | `http://localhost:8000/mcp` | Where the chat backend finds the MCP server |
-| `CLAUDE_MODEL` | `claude-opus-5-5` | The Claude model to use |
+| `CLAUDE_MODEL` | `claude-haiku-5-5` | The Claude model to use |
+| `CLAUDE_EFFORT` | `low` | How hard the model thinks: `low`, `medium` or `high`. Lower is faster |
 
 ## Data
 

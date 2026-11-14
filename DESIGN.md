@@ -79,17 +79,26 @@ There's no alias table in the code. When a question says "NYC" or "the UK", Clau
 
 ## Chat backend
 
-`chat/main.py` is a single FastAPI endpoint, `POST /api/chat`. For each request it:
+`chat/main.py` runs one agent loop and offers it through two endpoints. For each question it:
 
 1. Connects to the MCP server and lists its tools.
 2. Gives the tools to Claude along with the conversation.
 3. Runs the tool-use loop. Each time Claude asks for a tool, the backend calls it on the MCP server and returns the result. The loop is capped at 8 rounds.
-4. Returns the answer **and** the list of tool calls, so the UI can show them.
+4. Reports what happens as **events**: `tool_call` when Claude picks a tool, `tool_result` when the MCP server answers, `text` for each piece of the answer as Claude writes it, then `done` (or `error`).
+
+The two endpoints:
+
+| Endpoint | Returns | Used by |
+|---|---|---|
+| `POST /api/chat/stream` | The events as they happen, one JSON object per line (`application/x-ndjson`) | The web UI |
+| `POST /api/chat` | One JSON response `{answer, tool_calls}` once everything is done | Tests and scripts |
+
+Bad requests (empty question, missing API key) are rejected with a normal HTTP error before streaming starts. A failure after streaming has started can't change the HTTP status any more, so it's sent as an `error` event instead, and the UI shows it the same way.
 
 Other behavior:
 
 - **History:** the UI sends the plain-text history each time, so follow-up questions like *"and in New York?"* work. Tool results from earlier turns aren't resent.
-- **Model:** `claude-opus-5-5`, configurable with `CLAUDE_MODEL`, with server-side refusal fallback enabled. The backend runs the tool loop itself so it can record every MCP call for the UI.
+- **Model:** `claude-haiku-5-5` at low effort, configurable with `CLAUDE_MODEL` and `CLAUDE_EFFORT`. See *Speed* below for why. On models that support it (Opus, Sonnet), server-side refusal fallback is enabled.
 - **System prompt:** Claude must:
   - answer only from tool results;
   - check the overview when a name is unclear;
@@ -97,6 +106,31 @@ Other behavior:
   - report salaries in their original currency unless asked otherwise;
   - ask which person is meant when a name matches several people;
   - decline questions that aren't about the people data.
+
+## Speed
+
+Measuring a few questions showed that **about 99% of the time is spent waiting for Claude**. The MCP server and SQLite take 10–40 ms. Every answer needs at least two Claude calls in a row: one to choose a tool, one to write the answer from the result.
+
+Two changes followed from that:
+
+**1. A faster model.** Median time per question, on the same questions:
+
+| Model | Median | Price per million tokens (in / out) |
+|---|---|---|
+| Opus 5.5, medium effort (previous default) | 4.0 s | $4 / $20 |
+| Opus 5.5, low effort | 3.5 s | $4 / $20 |
+| Sonnet 5.5, low effort | 3.2 s | $2 / $10 |
+| **Haiku 5.5, low effort (default)** | **2.5 s** | **$0.10 / $0.50** |
+
+These are simple lookups, so a small model is a good fit. Haiku passed the full end-to-end suite twice before becoming the default. Opus "fast mode" wasn't available on this account.
+
+**2. Streaming.** The UI used to show nothing until the whole answer was ready. It now shows each tool lookup as it happens and the answer as it's written. Measured on "Who reports to Bea?":
+
+| | Before (Opus, no streaming) | After (Haiku, streaming) |
+|---|---|---|
+| First sign of progress | 3.9 s | 1.1 s ("Looking up get_person…") |
+| Answer starts appearing | 3.9 s | 1.8 s |
+| Answer complete | 3.9 s | 2.4 s |
 
 ## Caching
 
@@ -154,5 +188,4 @@ In the UI, errors appear inline as a red message bubble, and the conversation st
 
 ## Not done yet
 
-- Streaming answers token by token. Answers currently arrive all at once, with a "Thinking…" indicator while waiting.
 - Docker / one-command startup.

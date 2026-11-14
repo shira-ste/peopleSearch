@@ -71,6 +71,7 @@ header p { margin: 0 0 12px; color: var(--muted); }
 .message.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); }
 .message.error { color: var(--error); border-color: var(--error); }
 .message.loading { color: var(--muted); font-style: italic; }
+.message.loading .tool-progress { font-style: normal; }
 
 .tools { margin-top: 8px; font-size: 0.85rem; white-space: normal; }
 .tools summary { cursor: pointer; color: var(--muted); }
@@ -109,3 +110,6 @@ form button {
   cursor: pointer;
 }
 form button:disabled { opacity: 0.5; cursor: default; }
+
+.tool-progress { list-style: none; margin: 0 0 6px; padding: 0; color: var(--muted); font-size: 0.9rem; white-space: normal; }
+.tool-progress li { margin: 2px 0; }
