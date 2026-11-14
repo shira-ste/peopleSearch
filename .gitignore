@@ -7,3 +7,4 @@ web/dist/
 .DS_Store
 *.swp
 *.swo
+.idea/server.iml
