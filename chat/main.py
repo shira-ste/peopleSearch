@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anthropic
 from anthropic.types.beta import BetaMessageParam, BetaTextBlockParam, BetaToolParam, BetaToolResultBlockParam
@@ -12,8 +12,13 @@ from mcp.types import CallToolResult
 from pydantic import BaseModel
 
 MCP_URL = os.environ.get("MCP_URL", "http://localhost:8000/mcp")
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-5-5")
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORT = cast(Effort, os.environ.get("CLAUDE_EFFORT", "low"))  # lower is faster
 MAX_ROUNDS = 8
+# Server-side refusal fallback is only offered on some models (not Haiku), so it's sent only to those.
+FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1"}
+USE_FALLBACK = MODEL in FALLBACK_MODELS
 
 SYSTEM = """You answer questions about a company's people records using the provided tools.
 - Answer only from tool results; never guess numbers. If the tools can't answer, say so.
@@ -79,9 +84,9 @@ async def run_agent(messages: list[BetaMessageParam], tool_calls: list[ToolCall]
                 system=SYSTEM_BLOCKS,
                 tools=tools,
                 messages=messages,
-                output_config={"effort": "medium"},
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
+                output_config={"effort": EFFORT},
+                betas=["server-side-fallback-2026-07-01"] if USE_FALLBACK else anthropic.omit,
+                fallbacks="default" if USE_FALLBACK else anthropic.omit,
                 # Prompt caching, two breakpoints: SYSTEM_BLOCKS caches tools + system prompt for every question;
                 # this one caches the conversation so far, so later rounds of the tool loop reuse it too.
                 cache_control={"type": "ephemeral"},

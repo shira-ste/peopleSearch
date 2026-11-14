@@ -9,15 +9,19 @@ server's own tests). Language models phrase answers differently each time, so th
 fact or tool behaviour, not exact wording.
 """
 
+import csv
 import os
 import re
+import statistics
 from collections.abc import Callable, Iterator
+from datetime import date, datetime
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 import main
+from ingest import CSV_PATH
 
 pytestmark = [
     pytest.mark.e2e,
@@ -40,8 +44,25 @@ def ask(api: TestClient, *turns: str) -> Answer:
     return answer
 
 
+WORDS = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "eight": "8"}
+
+
 def numbers(text: str) -> set[str]:
-    return set(re.findall(r"\d+(?:\.\d+)?", text.replace(",", "")))
+    """Numbers mentioned in an answer, including small ones written as words ("three")."""
+    found = set(re.findall(r"\d+(?:\.\d+)?", text.replace(",", "")))
+    return found | {digit for word, digit in WORDS.items() if re.search(rf"\b{word}\b", text, re.I)}
+
+
+def expected_average_age_of_active_employees() -> float:
+    """Ages change over time, so compute today's value from the CSV instead of hard-coding it."""
+    with open(CSV_PATH, encoding="utf-8-sig", newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["Work Status"] == "active" and r["Date of Birth"]]
+    today = date.today()
+    ages = []
+    for r in rows:
+        born = datetime.strptime(r["Date of Birth"], "%d/%m/%Y").date()
+        ages.append(today.year - born.year - ((today.month, today.day) < (born.month, born.day)))
+    return statistics.mean(ages)
 
 
 def used_tool(answer: Answer, name: str, check: Callable[[dict[str, Any]], bool] = lambda args: True) -> bool:
@@ -64,7 +85,8 @@ def test_counts(api: TestClient, question: str, expected: str) -> None:
 
 def test_average_age_of_employees(api: TestClient) -> None:
     answer = ask(api, "What is the average age of employees?")
-    assert numbers(answer["answer"]) & {"36.4", "36.44"}
+    expected = expected_average_age_of_active_employees()
+    assert numbers(answer["answer"]) & {f"{expected:.1f}", f"{expected:.2f}"}
     assert used_tool(answer, "aggregate", lambda a: a.get("filter", {}).get("work_status") == "active")
 
 
