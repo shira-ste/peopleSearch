@@ -117,6 +117,13 @@ def test_place_not_in_data(api: TestClient) -> None:
     assert re.search(r"\b(0|zero|no|none)\b", answer)
 
 
+def test_aliases_are_mapped_without_an_extra_lookup_round(api: TestClient) -> None:
+    """The valid values come with the MCP server's instructions, so "NYC" needs no get_dataset_overview call."""
+    answer = ask(api, "How many people are in the NYC office?")
+    assert "27" in numbers(answer["answer"])
+    assert not used_tool(answer, "get_dataset_overview")
+
+
 def test_follow_up_question_uses_history(api: TestClient) -> None:
     answer = ask(api, "How many people live in London?", "55 people live in London.", "And in New York?")
     assert "27" in numbers(answer["answer"])

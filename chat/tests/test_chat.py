@@ -110,6 +110,15 @@ def test_every_claude_call_enables_prompt_caching(api: TestClient, fake_claude: 
         assert request["system"][-1]["cache_control"] == {"type": "ephemeral"}  # caches tools + system prompt
 
 
+def test_system_prompt_includes_the_data_servers_valid_values(api: TestClient, fake_claude: FakeFactory) -> None:
+    fake = fake_claude(text_reply("Hi."))
+    ask(api, "Hello")
+    rules, server_notes = fake.requests[0]["system"]
+    assert "cache_control" not in rules
+    assert server_notes["cache_control"] == {"type": "ephemeral"}  # one breakpoint, after everything stable
+    assert "New York" in server_notes["text"] and "London HQ & Flagship" in server_notes["text"]
+
+
 def test_cached_prefix_is_identical_across_rounds(api: TestClient, fake_claude: FakeFactory) -> None:
     """The cache only hits if tools and system prompt are byte-identical on every call."""
     fake = fake_claude(tool_reply(("count_people", {})), tool_reply(("get_dataset_overview", {})), text_reply("Done."))

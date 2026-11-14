@@ -77,7 +77,13 @@ A tool such as `run_sql` could answer anything, but it would push query-writing 
 
 ### How Claude maps vague words to data
 
-There's no alias table in the code. When a question says "NYC" or "the UK", Claude calls `get_dataset_overview`, sees the real values (`New York`, `United Kingdom`), and filters with those. If a place isn't in the data, such as "Paris", Claude can say so instead of reporting "0 people".
+There's no alias table in the code. Instead, the MCP server sends its **instructions** when a client connects: an MCP feature for telling clients how to use a server. They list the valid values of every category field (cities, offices, teams, …) and short notes on the data, built from the database at startup. The chat backend adds them to Claude's system prompt.
+
+So when a question says "NYC" or "the UK", Claude maps it straight to `New York` or `United Kingdom` and filters with that. If a place isn't listed, such as "Paris", Claude can say so without calling any tool.
+
+This used to be done by calling `get_dataset_overview` first. That cost a whole extra Claude round trip, about 1 s, because the real tool could only be chosen after the overview came back. The tool still exists for clients that want the data on demand.
+
+The instructions are built when the server starts, so restart it after re-ingesting a changed CSV.
 
 ## Chat backend
 
@@ -103,7 +109,7 @@ Other behavior:
 - **Model:** `claude-haiku-5-5` at low effort, configurable with `CLAUDE_MODEL` and `CLAUDE_EFFORT`. See *Speed* below for why. On models that support it (Opus, Sonnet), server-side refusal fallback is enabled.
 - **System prompt:** Claude must:
   - answer only from tool results;
-  - check the overview when a name is unclear;
+  - map places and categories using the valid values from the data server;
   - treat "employees" as active people;
   - report salaries in their original currency unless asked otherwise;
   - ask which person is meant when a name matches several people;
@@ -113,7 +119,7 @@ Other behavior:
 
 Measuring a few questions showed that **about 99% of the time is spent waiting for Claude**. The MCP server and SQLite take 10–40 ms. Every answer needs at least two Claude calls in a row: one to choose a tool, one to write the answer from the result.
 
-Two changes followed from that:
+Three changes followed from that:
 
 **1. A faster model.** Median time per question, on the same questions:
 
@@ -133,6 +139,15 @@ These are simple lookups, so a small model is a good fit. Haiku passed the full 
 | First sign of progress | 3.9 s | 1.1 s ("Looking up get_person…") |
 | Answer starts appearing | 3.9 s | 1.8 s |
 | Answer complete | 3.9 s | 2.4 s |
+
+**3. No extra lookup round.** Each Claude call costs about 1 s, mostly fixed overhead, so the number of calls matters more than their size. Two calls is the minimum for a question that needs data: one to request a tool, and one to answer from its result, because Claude can't run tools itself. A third call happened whenever Claude first had to look up the valid values (`get_dataset_overview`) before it could choose the real tool. Sending those values with the MCP server's instructions removed that round:
+
+| | Calls per question | Median |
+|---|---|---|
+| Before | 2.3 | 2.73 s |
+| After | 1.8 (a question about a place that isn't in the data, like "Paris", now needs only 1) | 2.29 s |
+
+Turning off Claude's thinking was also measured. Each call got about 0.25 s faster, but Claude made more extra lookups, so it was slower overall, and it was not adopted.
 
 ## Caching
 

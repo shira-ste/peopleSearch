@@ -54,6 +54,15 @@ async def test_server_exposes_five_tools_with_output_schemas() -> None:
     assert all(t.output_schema for t in tools)
 
 
+async def test_instructions_give_clients_the_valid_values(rows: Rows) -> None:
+    """Clients get the valid values on connect, so the model needn't spend a round on get_dataset_overview."""
+    async with Client(server.mcp) as client:
+        instructions = client.instructions or ""
+    for column in ("City", "Office", "Team", "Country"):
+        for value in {r[column] for r in rows} - {""}:
+            assert value in instructions
+
+
 async def test_overview_lists_real_category_values(rows: Rows) -> None:
     overview = await call("get_dataset_overview")
     assert overview["total_people"] == len(rows)

@@ -38,11 +38,51 @@ OPERATIONS: dict[Operation, Callable[[list[float]], float]] = {
     "avg": statistics.mean, "min": min, "max": max, "sum": sum, "median": statistics.median,
 }  # fmt: skip
 
-mcp = MCPServer(
-    "people",
-    instructions="Query a company's people records (a bakery chain with offices in London, New York and "
-    "Tel Aviv). Call get_dataset_overview first to learn the valid values of each field.",
-)
+
+def query(sql: str, params: Sequence[Any] = ()) -> list[Row]:
+    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in con.execute(sql, params)]
+    finally:
+        con.close()
+
+
+DATA_NOTES = [
+    "Salaries are stored in their original currency (USD, GBP or ILS) and pay type (Yearly, Monthly, Hourly).",
+    "annual_salary = Yearly x1, Monthly x12, Hourly x2080 (40h x 52 weeks), still in the original currency.",
+    "Pass convert_to to compare salaries across currencies; conversion uses live ECB rates.",
+    "One person is 'pending_arrival' (not started yet) and has almost no data.",
+    "Age and tenure are calculated from today's date.",
+]
+CATEGORY_FIELDS = ["city", "country", "office", "team", "gender", "work_status", "salary_type", "salary_currency"]
+
+
+def category_values() -> dict[str, list[str]]:
+    """The distinct values of each category field, e.g. {"city": ["London", "New York", "Tel Aviv"], ...}."""
+    return {
+        c: [r[c] for r in query(f"SELECT DISTINCT {c} FROM people WHERE {c} IS NOT NULL ORDER BY 1")]
+        for c in CATEGORY_FIELDS
+    }
+
+
+def server_instructions() -> str:
+    """Sent to clients when they connect. Listing the valid values up front means the model can map words
+    like "NYC" to "New York" straight away, instead of spending an extra round on get_dataset_overview."""
+    values = "\n".join(f"- {field}: {', '.join(vals)}" for field, vals in category_values().items())
+    notes = "\n".join(f"- {note}" for note in DATA_NOTES)
+    return (
+        "Query a company's people records: a bakery chain with offices in London, New York and Tel Aviv.\n"
+        f"Valid values for filters (matching is case-insensitive):\n{values}\n"
+        f"Notes on the data:\n{notes}"
+    )
+
+
+# The instructions are built from the data, so the database must exist before the server object is created.
+if not DB_PATH.exists():
+    print(f"Ingested {ingest()} people into {DB_PATH}")
+
+mcp = MCPServer("people", instructions=server_instructions())
 
 
 # ---------- Inputs ----------
@@ -161,15 +201,6 @@ class SearchResult(FxInfo):
 # ---------- Helpers ----------
 
 
-def query(sql: str, params: Sequence[Any] = ()) -> list[Row]:
-    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-    con.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in con.execute(sql, params)]
-    finally:
-        con.close()
-
-
 def where(f: PeopleFilter | None) -> tuple[str, list[Any]]:
     """Build a parameterized WHERE clause. Column names come from code; values are always bound parameters."""
     f = f or PeopleFilter()
@@ -240,20 +271,10 @@ def to_person(r: Row, rates: fx.FxRates | None = None) -> Person:
 def get_dataset_overview() -> Overview:
     """Describe the dataset: total people, the valid values of each category field, and salary notes.
     Use it to map words like 'NYC', 'UK' or 'the bakers' onto real values before filtering."""
-    fields = ["city", "country", "office", "team", "gender", "work_status", "salary_type", "salary_currency"]
     return Overview(
         total_people=query("SELECT COUNT(*) AS n FROM people")[0]["n"],
-        values={
-            c: [r[c] for r in query(f"SELECT DISTINCT {c} FROM people WHERE {c} IS NOT NULL ORDER BY 1")]
-            for c in fields
-        },
-        notes=[
-            "Salaries are stored in their original currency (USD, GBP or ILS) and pay type (Yearly, Monthly, Hourly).",
-            "annual_salary = Yearly x1, Monthly x12, Hourly x2080 (40h x 52 weeks), still in the original currency.",
-            "Pass convert_to to compare salaries across currencies; conversion uses live ECB rates.",
-            "One person is 'pending_arrival' (not started yet) and has almost no data.",
-            "Age and tenure are calculated from today's date.",
-        ],
+        values=category_values(),
+        notes=DATA_NOTES,
     )
 
 
@@ -370,6 +391,4 @@ def get_person(name_or_email: str) -> PersonLookup:
 
 
 if __name__ == "__main__":
-    if not DB_PATH.exists():
-        print(f"Ingested {ingest()} people into {DB_PATH}")
     mcp.run("streamable-http", host="127.0.0.1", port=int(os.environ.get("MCP_PORT", "8000")))

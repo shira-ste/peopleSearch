@@ -31,8 +31,8 @@ USE_FALLBACK = MODEL in FALLBACK_MODELS
 
 SYSTEM = """You answer questions about a company's people records using the provided tools.
 - Answer only from tool results; never guess numbers. If the tools can't answer, say so.
-- If a place, team or other category in the question doesn't obviously match the data, call \
-get_dataset_overview first to find the right value (e.g. "NYC" -> city "New York").
+- Map places, teams and other categories to the valid values the data server lists below \
+(e.g. "NYC" -> city "New York") and use them directly; if a place isn't listed, it isn't in the data.
 - "Employees" means people with work_status 'active'; "people" or "everyone" includes all records.
 - Report salaries in their original currencies. Only use convert_to when the user asks for a single \
 currency or a comparison across currencies, and then mention the exchange-rate date.
@@ -40,9 +40,19 @@ currency or a comparison across currencies, and then mention the exchange-rate d
 - Politely decline questions unrelated to the people data.
 - Be concise: lead with the answer, then brief supporting detail."""
 
-# The cache breakpoint here makes tools + system prompt (identical on every call) one cache entry
-# that all questions share for 5 minutes after the last use.
-SYSTEM_BLOCKS: list[BetaTextBlockParam] = [{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}]
+
+def system_blocks(server_instructions: str | None) -> list[BetaTextBlockParam]:
+    """Our rules plus the MCP server's own instructions (which list the valid values in the data).
+
+    The cache breakpoint on the last block makes tools + system prompt (identical on every call) one cache
+    entry that all questions share for 5 minutes after the last use.
+    """
+    blocks: list[BetaTextBlockParam] = [{"type": "text", "text": SYSTEM}]
+    if server_instructions:
+        blocks.append({"type": "text", "text": f"Notes from the data server:\n{server_instructions}"})
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
 
 client = anthropic.AsyncAnthropic()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -121,6 +131,7 @@ def log_usage(usage: BetaUsage) -> None:
 async def run_agent(messages: list[BetaMessageParam], emit: Emit) -> None:
     """Run Claude's tool-use loop against the MCP server, reporting progress and answer text through `emit`."""
     async with Client(MCP_URL) as mcp:
+        system = system_blocks(mcp.instructions)
         tools: list[BetaToolParam] = [
             {"name": t.name, "description": t.description or "", "input_schema": t.input_schema}
             for t in (await mcp.list_tools()).tools
@@ -130,13 +141,13 @@ async def run_agent(messages: list[BetaMessageParam], emit: Emit) -> None:
             async with client.beta.messages.stream(
                 model=MODEL,
                 max_tokens=16000,
-                system=SYSTEM_BLOCKS,
+                system=system,
                 tools=tools,
                 messages=messages,
                 output_config={"effort": EFFORT},
                 betas=["server-side-fallback-2026-07-01"] if USE_FALLBACK else anthropic.omit,
                 fallbacks="default" if USE_FALLBACK else anthropic.omit,
-                # Prompt caching, two breakpoints: SYSTEM_BLOCKS caches tools + system prompt for every question;
+                # Prompt caching, two breakpoints: system_blocks() caches tools + system prompt for every question;
                 # this one caches the conversation so far, so later rounds of the tool loop reuse it too.
                 cache_control={"type": "ephemeral"},
             ) as stream:
