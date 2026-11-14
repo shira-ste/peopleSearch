@@ -16,7 +16,7 @@ ANNUAL_FACTOR = {"Yearly": 1, "Monthly": 12, "Hourly": 2080}  # 2080 = 40h x 52 
 SCHEMA = """
 CREATE TABLE people (
     id INTEGER PRIMARY KEY,
-    full_name TEXT, first_name TEXT, last_name TEXT, nickname TEXT,
+    full_name TEXT, nickname TEXT,
     work_status TEXT, job_title TEXT, email TEXT, team TEXT,
     office TEXT, city TEXT, country TEXT, gender TEXT, contract_type TEXT,
     start_date TEXT, date_of_birth TEXT,
@@ -46,6 +46,8 @@ def parse_float(value: str | None) -> float | None:
 
 
 def to_row(r: dict[str, str]) -> dict[str, Any]:
+    # Only the full name is stored: it's what "Reports To" uses, and the CSV's "Last Name" column contains
+    # nicknames ("'Alley' Vance"). First + last name are only a fallback if "Full Name" is ever empty.
     full_name = clean(r["Full Name"]) or " ".join(filter(None, [clean(r["First Name"]), clean(r["Last Name"])]))
     nickname = re.search(r"'([^']+)'", full_name or "")
     amount = parse_float(r["Salary Amount"])
@@ -53,8 +55,6 @@ def to_row(r: dict[str, str]) -> dict[str, Any]:
     currency = clean(r["Salary Currency"])
     return {
         "full_name": full_name,
-        "first_name": clean(r["First Name"]),
-        "last_name": clean(r["Last Name"]),
         "nickname": nickname.group(1) if nickname else None,
         "work_status": clean(r["Work Status"]),
         "job_title": clean(r["Job"]),

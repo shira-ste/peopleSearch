@@ -25,6 +25,8 @@ These quirks of the data shaped the design:
 - **Salaries come in three currencies and three pay types.** 79 people are paid yearly, 24 monthly and 3 hourly. See *Salaries* below.
 - **One person hasn't started yet.** Oryan Moshe is `pending_arrival` and has almost no data, yet several people already report to them.
 - **Nicknames are embedded in names,** for example `Beatrix 'Bea' Vane`. The nickname is extracted into its own column so that "Bea" finds her.
+- **The CSV's "Last Name" column contains the nickname** (`'Bea' Vane`). Only the full name is stored: it's what "Reports To" uses, and searching it covers first names, surnames and nicknames in one "contains" match. First and last name aren't stored. An index on them wouldn't help either, because a "contains" search can't use one, and at 107 rows a full scan takes about 20 µs.
+- **Not every apostrophe is a nickname.** Only text *between two quotes* counts, so `O'Malley` stays a surname and `Sullivan 'Sully' O'Shea` gets the nickname "Sully".
 - **"Reports To" holds a name, not an ID.** It's resolved to a `manager_id` by exact full-name match; all 105 references resolve. If a name ever doesn't match, the raw name is kept and `manager_id` stays empty.
 
 ## Salaries
