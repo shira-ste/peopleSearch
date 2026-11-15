@@ -126,6 +126,30 @@ describe('People Search chat', () => {
     ])
   })
 
+  it('treats a stream that stops without "done" as interrupted, not as a finished answer', async () => {
+    const fetchMock = mockBackend(streamed({ type: 'text', text: 'Half an ans' }), answer('24.'))
+    render(<App />)
+    await userEvent.type(screen.getByRole('textbox'), 'London?{Enter}')
+    expect(await screen.findByText(/connection was interrupted/)).toBeInTheDocument()
+
+    await userEvent.type(screen.getByRole('textbox'), 'Tel Aviv?{Enter}')
+    await screen.findByText('24.')
+    // The cut-off reply is not sent back as if the assistant had said it.
+    expect(sentMessages(fetchMock, 1)).toEqual([
+      { role: 'user', content: 'London?' },
+      { role: 'user', content: 'Tel Aviv?' },
+    ])
+  })
+
+  it('reads a final event that has no trailing newline', async () => {
+    const body = '{"type":"text","text":"55."}\n{"type":"done"}'
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(body)))
+    render(<App />)
+    await userEvent.type(screen.getByRole('textbox'), 'London?{Enter}')
+    expect(await screen.findByText('55.')).toBeInTheDocument()
+    expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument()
+  })
+
   it('sends the conversation history for follow-up questions', async () => {
     const fetchMock = mockBackend(answer('55 in London.'), answer('27 in NYC.'))
     render(<App />)

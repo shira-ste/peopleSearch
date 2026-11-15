@@ -37,9 +37,9 @@ async function streamChat(history: ChatMessage[], onEvent: (event: StreamEvent) 
   const res = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // Error bubbles are UI-only; send just the real conversation.
+    // Error bubbles and empty replies are UI-only; send just the real conversation.
     body: JSON.stringify({
-      messages: history.filter((m) => !m.isError).map(({ role, content }) => ({ role, content })),
+      messages: history.filter((m) => !m.isError && m.content.trim()).map(({ role, content }) => ({ role, content })),
     }),
   })
   if (!res.ok || !res.body) {
@@ -48,6 +48,13 @@ async function streamChat(history: ChatMessage[], onEvent: (event: StreamEvent) 
     throw new Error(typeof body?.detail === 'string' ? body.detail : `Request failed (${res.status})`)
   }
 
+  let finished = false // a complete stream always ends with a "done" or "error" event
+  const handle = (line: string) => {
+    if (!line.trim()) return
+    const event = JSON.parse(line) as StreamEvent
+    finished ||= event.type === 'done' || event.type === 'error'
+    onEvent(event)
+  }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
   let buffer = ''
   for (;;) {
@@ -56,10 +63,10 @@ async function streamChat(history: ChatMessage[], onEvent: (event: StreamEvent) 
     buffer += value
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? '' // keep a partial line until the rest arrives
-    for (const line of lines) {
-      if (line.trim()) onEvent(JSON.parse(line) as StreamEvent)
-    }
+    lines.forEach(handle)
   }
+  handle(buffer) // a last line without a trailing newline
+  if (!finished) throw new Error('The connection was interrupted before the answer finished. Please try again.')
 }
 
 /** Apply one streamed event to the assistant message being built. */
