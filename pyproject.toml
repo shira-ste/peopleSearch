@@ -1,0 +1,56 @@
+# uv workspace root: one lock file and one virtual environment for both Python packages.
+# `uv sync` installs the MCP server, the chat backend and the dev tools together.
+
+[project]
+name = "people-search"
+version = "0.1.0"
+description = "Ask questions about people records in plain English, answered through an MCP server."
+requires-python = ">=3.12"
+dependencies = ["people-server", "people-chat"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "httpx2>=2.0.0",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
+
+[tool.uv]
+package = false # the root only ties the workspace together; it isn't a package itself
+
+[tool.uv.workspace]
+members = ["server", "chat"]
+
+[tool.uv.sources]
+people-server = { workspace = true }
+people-chat = { workspace = true }
+
+# ---------- Code quality ----------
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify, type annotations
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["people_server", "people_chat", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test doubles mimic SDK methods that take arbitrary keyword arguments.
+"tests/**" = ["ANN401"]
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+strict = true
+files = ["server/src", "chat/src", "tests"]
+
+# ---------- Tests ----------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: calls the real Claude API (costs money); run with RUN_E2E=1"]
