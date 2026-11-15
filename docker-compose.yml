@@ -1,0 +1,45 @@
+# One-command startup: `docker compose up --build`, then open http://localhost:8080
+# Needs ANTHROPIC_API_KEY in .env (copy .env.example).
+
+services:
+  mcp:
+    build: { context: ., dockerfile: docker/python.Dockerfile, args: { PACKAGE: people-server } }
+    command: ["people-server"]
+    environment:
+      PEOPLE_CSV: /data/people-list-export.csv   # the CSV to serve; mount a different file to change it
+      PEOPLE_DB: /db/people.db                   # built from the CSV on startup
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+    volumes:
+      - ./data:/data:ro
+      - db:/db
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), 2)"]
+      interval: 2s
+      retries: 30
+
+  chat:
+    build: { context: ., dockerfile: docker/python.Dockerfile, args: { PACKAGE: people-chat } }
+    command: ["people-chat"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      MCP_URL: http://mcp:8000/mcp
+      CHAT_HOST: 0.0.0.0
+      CHAT_PORT: "8001"
+    depends_on:
+      mcp: { condition: service_healthy }
+    ports: ["8001:8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 2s
+      retries: 30
+
+  web:
+    build: { context: ., dockerfile: docker/web.Dockerfile }
+    depends_on:
+      chat: { condition: service_healthy }
+    ports: ["8080:80"]
+
+volumes:
+  db:
