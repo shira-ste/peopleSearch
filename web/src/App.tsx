@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Mirrors the chat backend's streamed events (chat/main.py): one JSON object per line.
+// Mirrors the chat backend's streamed events (chat/src/people_chat/models.py): one JSON object per line.
 type StreamEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_call'; name: string; args: Record<string, unknown> }
