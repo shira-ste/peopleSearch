@@ -57,6 +57,33 @@ The server uses the official MCP Python SDK (`MCPServer`) with the Streamable HT
 - `operation` is one of `avg`, `min`, `max`, `sum`, `median`.
 - `group_by` is one of `city`, `country`, `office`, `team`, `gender`, `job_title`, `work_status`, `salary_type`, `salary_currency`, `start_year`.
 
+### Scope: which calculations are supported
+
+The assignment's examples are a count and an average, so the API covers those and their natural neighbours rather than general statistics.
+
+| Supported by the tools | Example |
+|---|---|
+| Counting, filtered and grouped | "How many hourly employees work in London?", "People per team" |
+| avg / min / max / sum / median of age, tenure, annual salary | "Average salary by office", "Median age in Tel Aviv" |
+| Listing and sorting | "The 5 longest-serving people" |
+
+**Derived questions** are answered by Claude combining tool results. For example:
+- *"What percentage of people are in London?"* comes from one grouped count, then a division.
+- *"Who earns above the average?"* comes from an average, then a search with that threshold.
+
+This covers most follow-ups without new tools. The final arithmetic is done by the model, which is reliable for a simple division or difference but not guaranteed the way a database calculation is.
+
+**Left out on purpose**, and cheap to add if needed:
+
+| Calculation | Example question | How it would be added |
+|---|---|---|
+| Percentiles | "What do the top 10% earn?" | Generalize the median |
+| Standard deviation | "How spread out are salaries?" | One more `operation` |
+| Range buckets | "How many people in their 20s, 30s, 40s?" | A new `group_by` over age or tenure ranges. Today this takes one count per range |
+| Server-computed percentages | "Gender split by team, in %" | A share next to each group count, so Claude doesn't divide |
+
+A free-form SQL tool would cover all of these at once. It was rejected for the reasons in [Why typed tools, not SQL](#why-typed-tools-not-sql).
+
 ### The shared filter
 
 All fields are optional and combined with AND. Matching is case-insensitive.
