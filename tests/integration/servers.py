@@ -22,12 +22,12 @@ def free_port() -> int:
 
 
 @contextmanager
-def running_mcp_server(db_path: Path) -> Iterator[str]:
-    """Run `python -m people_server` on a free port with its own database; yield its /mcp URL."""
+def running_mcp_server(db_path: Path, *args: str) -> Iterator[str]:
+    """Run `python -m people_server [args]` on a free port with its own database; yield its /mcp URL."""
     port = free_port()
     env = {**os.environ, "PEOPLE_CSV": str(CSV_PATH), "PEOPLE_DB": str(db_path), "MCP_PORT": str(port)}
     proc = subprocess.Popen(
-        [sys.executable, "-m", "people_server"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        [sys.executable, "-m", "people_server", *args], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
     )
     url = f"http://127.0.0.1:{port}/mcp"
     try:

@@ -125,17 +125,45 @@ def test_failed_rebuild_keeps_the_previous_database(tmp_path: Path, rows: list[C
     assert not (tmp_path / "people.db.tmp").exists()
 
 
-def test_ensure_database_rebuilds_only_when_the_csv_changes(tmp_path: Path) -> None:
+def count(db: Path) -> int:
+    total: int = sqlite3.connect(db).execute("SELECT COUNT(*) FROM people").fetchone()[0]
+    return total
+
+
+def test_ensure_database_rebuilds_only_when_the_csv_contents_change(tmp_path: Path) -> None:
     rows = read_csv()
     csv_path, db = write_csv(tmp_path / "people.csv", rows), tmp_path / "people.db"
 
     ensure_database(csv_path, db)  # missing: built
     built_at = db.stat().st_mtime_ns
-    ensure_database(csv_path, db)  # unchanged: kept
+    os.utime(csv_path)  # touched, same contents: kept
+    ensure_database(csv_path, db)
     assert db.stat().st_mtime_ns == built_at
 
     write_csv(csv_path, rows[:10])
-    later = db.stat().st_mtime + 10
-    os.utime(csv_path, (later, later))  # the CSV is now newer than the database
+    os.utime(csv_path, (0, 0))  # edited, but dated older than the database: still rebuilt
     ensure_database(csv_path, db)
-    assert sqlite3.connect(db).execute("SELECT COUNT(*) FROM people").fetchone() == (10,)
+    assert count(db) == 10
+
+
+def test_switching_to_another_file_rebuilds_even_if_it_is_older(tmp_path: Path) -> None:
+    db = tmp_path / "people.db"
+    ensure_database(write_csv(tmp_path / "all.csv", read_csv()), db)
+    older = write_csv(tmp_path / "older.csv", read_csv()[:5])
+    os.utime(older, (0, 0))
+    ensure_database(older, db)
+    assert count(db) == 5
+
+
+def test_a_database_from_before_source_tracking_is_rebuilt(tmp_path: Path) -> None:
+    csv_path, db = write_csv(tmp_path / "people.csv", read_csv()), tmp_path / "people.db"
+    ingest(csv_path, db)
+    with sqlite3.connect(db) as con:
+        con.execute("DROP TABLE source")
+    ensure_database(csv_path, db)
+    assert sqlite3.connect(db).execute("SELECT csv_path FROM source").fetchone() == (str(csv_path),)
+
+
+def test_a_missing_csv_is_a_clear_error(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="People CSV not found"):
+        ensure_database(tmp_path / "nope.csv", tmp_path / "people.db")

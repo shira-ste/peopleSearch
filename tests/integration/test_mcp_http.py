@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
+from tests.helpers import read_csv, write_csv
 from tests.integration.servers import running_mcp_server
 
 
@@ -32,3 +33,12 @@ def test_database_location_is_configurable(tmp_path: Path) -> None:
     db = tmp_path / "nested" / "folder" / "people.db"
     with running_mcp_server(db):
         assert db.exists()
+
+
+@pytest.mark.anyio
+async def test_csv_option_overrides_the_configured_file(tmp_path: Path) -> None:
+    other = write_csv(tmp_path / "other.csv", read_csv()[:10])
+    with running_mcp_server(tmp_path / "people.db", "--csv", str(other)) as url:
+        async with Client(url) as client:
+            result = await client.call_tool("count_people", {})
+    assert result.structured_content == {"total": 10, "group_by": None, "groups": None}

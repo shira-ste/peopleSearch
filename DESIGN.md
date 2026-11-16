@@ -234,6 +234,8 @@ The backend logs each call's cache usage (`cache_read` / `cache_write`). The opt
 | A large result | `limit` is capped at 100, and `total_matches` always gives the full count |
 | A bad date or amount in the CSV | Stored as empty instead of stopping the import |
 | An empty CSV, or a failure while loading | An error; the previous database stays in place (the new one is built in a temporary file and swapped in) |
+| Switching to another CSV, even one dated older | Rebuilt: the database records a SHA-256 of the CSV it came from and rebuilds when the contents differ (not when the file is newer, which missed older files) |
+| A CSV path that doesn't exist | The server stops with "People CSV not found: …" |
 | "Salary in USD" vs "people paid in USD" | The first converts everyone's salary; the second filters to people paid in dollars |
 | An unrelated question | Claude politely declines |
 

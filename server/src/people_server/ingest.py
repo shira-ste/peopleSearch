@@ -1,12 +1,14 @@
 """Load a people CSV export into a SQLite database.
 
 The server calls `ensure_database` on startup, so the database is (re)built on demand: when it's missing,
-or when the CSV is newer than it. To rebuild by hand: `uv run people-ingest path/to/people.csv`.
+or when it was built from a CSV with different contents. To rebuild by hand: `uv run people-ingest file.csv`.
 """
 
 import argparse
 import contextlib
 import csv
+import hashlib
+import io
 import logging
 import os
 import re
@@ -35,6 +37,8 @@ CREATE TABLE people (
     manager_name TEXT, manager_id INTEGER REFERENCES people(id)
 );
 CREATE INDEX people_manager ON people(manager_id);
+-- Which CSV the database was built from: a rebuild is needed when the CSV's contents change.
+CREATE TABLE source (csv_path TEXT NOT NULL, sha256 TEXT NOT NULL);
 """
 
 
@@ -140,8 +144,8 @@ def ingest(csv_path: Path, db_path: Path) -> int:
     The new database is written next to the old one and swapped in at the end, so a running server never
     sees a missing or half-built file, and a failed import leaves the previous database in place.
     """
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        rows = [to_row(r) for r in csv.DictReader(f)]
+    data = csv_path.read_bytes()
+    rows = [to_row(r) for r in csv.DictReader(io.StringIO(data.decode("utf-8-sig"), newline=""))]
     if not rows:
         raise ValueError(f"{csv_path} has no data rows")
 
@@ -157,15 +161,34 @@ def ingest(csv_path: Path, db_path: Path) -> int:
             con.execute(
                 "UPDATE people SET manager_id = (SELECT m.id FROM people m WHERE m.full_name = people.manager_name)"
             )
+            con.execute("INSERT INTO source VALUES (?, ?)", (str(csv_path), hashlib.sha256(data).hexdigest()))
         os.replace(tmp_path, db_path)
     finally:
         tmp_path.unlink(missing_ok=True)
     return len(rows)
 
 
+def built_from(db_path: Path) -> str | None:
+    """The SHA-256 of the CSV the database was built from, or None if there's no usable database."""
+    if not db_path.exists():
+        return None
+    try:
+        with contextlib.closing(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)) as con:
+            row = con.execute("SELECT sha256 FROM source").fetchone()
+    except sqlite3.Error:  # not a database, or built before the source table existed
+        return None
+    return str(row[0]) if row else None
+
+
 def ensure_database(csv_path: Path, db_path: Path) -> None:
-    """Build the database if it's missing or older than the CSV."""
-    if db_path.exists() and db_path.stat().st_mtime >= csv_path.stat().st_mtime:
+    """Build the database unless it was built from a CSV with exactly these contents.
+
+    Comparing contents, not modification times, means switching to another file (even an older one) or
+    editing the CSV in place always triggers a rebuild, and touching it without changes doesn't.
+    """
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"People CSV not found: {csv_path} (set PEOPLE_CSV or pass --csv)")
+    if built_from(db_path) == hashlib.sha256(csv_path.read_bytes()).hexdigest():
         return
     count = ingest(csv_path, db_path)
     logger.info("Loaded %d people from %s into %s", count, csv_path, db_path)

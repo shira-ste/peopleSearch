@@ -6,12 +6,13 @@ services:
     build: { context: ., dockerfile: docker/python.Dockerfile, args: { PACKAGE: people-server } }
     command: ["people-server"]
     environment:
-      PEOPLE_CSV: /data/people-list-export.csv   # the CSV to serve; mount a different file to change it
+      PEOPLE_CSV: /data/people.csv   # the file mounted below
       PEOPLE_DB: /db/people.db                   # built from the CSV on startup
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"
     volumes:
-      - ./data:/data:ro
+      # The CSV to serve. Another file: PEOPLE_CSV_FILE=/path/to/people.csv docker compose up
+      - ${PEOPLE_CSV_FILE:-./data/people-list-export.csv}:/data/people.csv:ro
       - db:/db
     ports: ["8000:8000"]
     healthcheck:

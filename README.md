@@ -106,13 +106,23 @@ Both Python services read environment variables, or `.env` in the folder they ru
 | `CLAUDE_MODEL` | `claude-haiku-5-5` | The Claude model to use |
 | `CLAUDE_EFFORT` | `low` | How hard the model thinks: `low`, `medium`, `high`, `xhigh` or `max`. Lower is faster |
 | `MCP_URL` | `http://localhost:8000/mcp` | Where the chat backend finds the MCP server |
-| `PEOPLE_CSV` | `data/people-list-export.csv` | The CSV export the MCP server serves |
+| `PEOPLE_CSV` | `data/people-list-export.csv` | The CSV export the MCP server serves (the `--csv` option overrides it) |
+| `PEOPLE_CSV_FILE` | `data/people-list-export.csv` | Docker only: the file on your machine to serve |
 | `PEOPLE_DB` | `data/people.db` | Where its SQLite copy is built |
 | `FX_ENABLED` | `true` | Allow live currency conversion (needs internet) |
 
 ## Data
 
-The MCP server builds its SQLite database from the CSV **on startup, whenever the CSV is newer than the database**, so there's no manual step. To serve a different file, set `PEOPLE_CSV` (in Docker, mount it into `/data`).
+By default the server serves the CSV in this repo, `data/people-list-export.csv`. To serve another file:
+
+```bash
+uv run people-server --csv ~/Downloads/people.csv           # without Docker
+PEOPLE_CSV_FILE=~/Downloads/people.csv docker compose up -d # with Docker
+```
+
+With Colima on a Mac, the file must be inside your home folder: only that folder is shared with Docker.
+
+The SQLite database is built **on startup, whenever the CSV's contents differ** from the file it was last built from, so there's no manual step. The database stores a SHA-256 fingerprint of its source CSV. Switching to another file (even an older one) or editing the CSV triggers a rebuild, and restarting with the same file doesn't.
 
 To rebuild by hand:
 
