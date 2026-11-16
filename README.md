@@ -7,6 +7,8 @@ The project has two parts:
 1. **An MCP server** that loads the people CSV into SQLite and exposes typed query tools over **Streamable HTTP at `/mcp`**.
 2. **A chat interface**: a React web app plus a small Python backend. The backend lets Claude answer questions by calling the MCP server's tools.
 
+**Design decisions** (why typed tools, how salaries and currencies work, error handling, speed and caching) are explained in [DESIGN.md](DESIGN.md).
+
 ```mermaid
 flowchart LR
     UI["Web chat<br/>React"] -->|POST /api/chat/stream| API["Chat backend<br/>FastAPI · :8001"]
